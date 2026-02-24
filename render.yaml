@@ -1,5 +1,5 @@
 # Render Background Worker Configuration
-# This deploys the Telegram bot as a background worker that runs continuously
+# This deploys the Telegram UserBot as a background worker
 
 services:
   - type: worker
@@ -8,6 +8,14 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false  # Set this in Render dashboard for security
+      - key: TELEGRAM_API_ID
+        sync: false  # Set this in Render dashboard
+      - key: TELEGRAM_API_HASH
+        sync: false  # Set this in Render dashboard
+      - key: TELEGRAM_PHONE_NUMBER
+        sync: false  # Set this in Render dashboard
+      - key: SESSION_NAME
+        value: render_userbot_session
     plan: starter  # Use 'starter' or higher for background workers
+    # Note: On first run, you may need to authenticate via Render Shell
+    # The session file will be created but may not persist on free tier

@@ -40,3 +40,10 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Telegram session files (NEVER commit these!)
+*.session
+*.session-journal
+
+# Registered users data
+registered_users.json
