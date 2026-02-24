@@ -1,0 +1,13 @@
+# Render Background Worker Configuration
+# This deploys the Telegram bot as a background worker that runs continuously
+
+services:
+  - type: worker
+    name: telegram-message-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false  # Set this in Render dashboard for security
+    plan: starter  # Use 'starter' or higher for background workers
