@@ -2,14 +2,13 @@
 """
 Telegram UserBot for sending messages to usernames
 Uses MTProto API (Telethon) - requires a real Telegram account
-Deployed on Render as a Background Worker
-
-IMPORTANT: This uses a REAL Telegram account (phone number), not a bot token.
 """
 
 import os
 import asyncio
 import logging
+import sys
+import traceback
 from typing import List, Optional
 
 from telethon import TelegramClient, events
@@ -20,134 +19,80 @@ from telethon.errors import (
     FloodWaitError,
     UserPrivacyRestrictedError,
     PeerIdInvalidError,
+    SessionPasswordNeededError,
+    AuthKeyUnregisteredError,
 )
+from telethon.sessions import StringSession
 
-# Enable logging
+# Setup logging - MUST go to stdout for Render
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+# Force stdout flush for Render
+sys.stdout.reconfigure(line_buffering=True)
 
 # Configuration
 MAX_USERNAMES = 50
 DELAY_SECONDS = 10
 
+print("=" * 60, flush=True)
+print("BOT STARTING UP...", flush=True)
+print("=" * 60, flush=True)
+
 # Get credentials from environment
 API_ID = os.environ.get("TELEGRAM_API_ID")
 API_HASH = os.environ.get("TELEGRAM_API_HASH")
 PHONE_NUMBER = os.environ.get("TELEGRAM_PHONE_NUMBER")
-SESSION_NAME = os.environ.get("SESSION_NAME", "userbot_session")
+SESSION_STRING = os.environ.get("SESSION_STRING")
+
+print(f"API_ID present: {bool(API_ID)}", flush=True)
+print(f"API_HASH present: {bool(API_HASH)}", flush=True)
+print(f"PHONE_NUMBER present: {bool(PHONE_NUMBER)}", flush=True)
+print(f"SESSION_STRING present: {bool(SESSION_STRING)}", flush=True)
 
 # Validate config
-if not all([API_ID, API_HASH, PHONE_NUMBER]):
-    raise ValueError(
-        "Missing required environment variables:\n"
-        "TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE_NUMBER"
-    )
+if not API_ID:
+    print("ERROR: TELEGRAM_API_ID is not set!", flush=True)
+    sys.exit(1)
+if not API_HASH:
+    print("ERROR: TELEGRAM_API_HASH is not set!", flush=True)
+    sys.exit(1)
+if not PHONE_NUMBER:
+    print("ERROR: TELEGRAM_PHONE_NUMBER is not set!", flush=True)
+    sys.exit(1)
+
+try:
+    API_ID = int(API_ID)
+except ValueError:
+    print("ERROR: TELEGRAM_API_ID must be a number!", flush=True)
+    sys.exit(1)
 
 # Create client
-client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+if SESSION_STRING:
+    print("Using SESSION_STRING from environment", flush=True)
+    session = StringSession(SESSION_STRING)
+else:
+    print("Using file-based session", flush=True)
+    session = "userbot_session"
 
+client = TelegramClient(session, API_ID, API_HASH)
 
-async def resolve_username_to_id(username: str) -> Optional[int]:
-    """Convert username to user ID using MTProto API."""
-    try:
-        # Remove @ if present
-        username = username.lstrip("@").strip()
-        
-        # Get entity (this resolves username to user object)
-        entity = await client.get_entity(username)
-        
-        if isinstance(entity, User):
-            return entity.id
-        else:
-            logger.warning(f"@{username} is not a user (might be a channel/group)")
-            return None
-            
-    except UsernameNotOccupiedError:
-        logger.error(f"Username @{username} does not exist")
-        return None
-    except UsernameInvalidError:
-        logger.error(f"Username @{username} is invalid")
-        return None
-    except Exception as e:
-        logger.error(f"Error resolving @{username}: {e}")
-        return None
-
-
-async def send_message_to_username(username: str, message: str) -> dict:
-    """Send message to a username. Returns result dict."""
-    result = {
-        "username": username,
-        "success": False,
-        "error": None,
-        "user_id": None,
-    }
-    
-    try:
-        # Resolve username to ID
-        user_id = await resolve_username_to_id(username)
-        
-        if not user_id:
-            result["error"] = "Username not found or invalid"
-            return result
-        
-        result["user_id"] = user_id
-        
-        # Send message
-        await client.send_message(user_id, message)
-        result["success"] = True
-        logger.info(f"Message sent to @{username} (ID: {user_id})")
-        
-    except UserPrivacyRestrictedError:
-        result["error"] = "User has privacy settings that prevent receiving messages"
-        logger.error(f"Privacy restriction for @{username}")
-        
-    except FloodWaitError as e:
-        result["error"] = f"Rate limited. Wait {e.seconds} seconds"
-        logger.error(f"Flood wait for @{username}: {e.seconds}s")
-        
-    except PeerIdInvalidError:
-        result["error"] = "Invalid user ID (user may have deleted account)"
-        logger.error(f"Peer ID invalid for @{username}")
-        
-    except Exception as e:
-        result["error"] = str(e)
-        logger.error(f"Failed to send to @{username}: {e}")
-    
-    return result
-
-
-async def send_messages_to_list(usernames: List[str], message: str, progress_callback=None) -> List[dict]:
-    """Send messages to a list of usernames with delay."""
-    results = []
-    
-    for i, username in enumerate(usernames, 1):
-        # Send message
-        result = await send_message_to_username(username, message)
-        results.append(result)
-        
-        # Progress callback
-        if progress_callback:
-            await progress_callback(i, len(usernames), result)
-        
-        # Delay between messages (except after last)
-        if i < len(usernames):
-            await asyncio.sleep(DELAY_SECONDS)
-    
-    return results
+# User state storage
+user_states = {}
+user_messages = {}
 
 
 def parse_usernames(text: str) -> List[str]:
     """Parse usernames from input text."""
-    # Split by commas or newlines
     raw_list = []
     for line in text.split("\n"):
         for item in line.split(","):
             raw_list.append(item.strip())
     
-    # Clean usernames
     usernames = []
     for username in raw_list:
         username = username.strip()
@@ -156,7 +101,7 @@ def parse_usernames(text: str) -> List[str]:
         if username:
             usernames.append(username.lower())
     
-    # Remove duplicates while preserving order
+    # Remove duplicates
     seen = set()
     unique = []
     for u in usernames:
@@ -167,29 +112,40 @@ def parse_usernames(text: str) -> List[str]:
     return unique
 
 
-async def generate_summary(results: List[dict]) -> str:
-    """Generate a summary of the sending operation."""
-    total = len(results)
-    successful = sum(1 for r in results if r["success"])
-    failed = total - successful
+async def resolve_and_send(username: str, message: str) -> dict:
+    """Resolve username and send message."""
+    result = {"username": username, "success": False, "error": None}
     
-    summary = [
-        "✅ <b>All messages processed!</b>",
-        "",
-        "📊 <b>Summary:</b>",
-        f"• Total: {total}",
-        f"• Successful: {successful}",
-        f"• Failed: {failed}",
-    ]
+    try:
+        clean_username = username.lstrip("@").strip()
+        if not clean_username:
+            result["error"] = "Empty username"
+            return result
+        
+        print(f"Resolving @{clean_username}...", flush=True)
+        entity = await client.get_entity(clean_username)
+        
+        if not isinstance(entity, User):
+            result["error"] = "Not a user (might be channel/group)"
+            return result
+        
+        await client.send_message(entity.id, message)
+        result["success"] = True
+        print(f"✅ Sent to @{clean_username}", flush=True)
+        
+    except UsernameNotOccupiedError:
+        result["error"] = "Username does not exist"
+    except UsernameInvalidError:
+        result["error"] = "Invalid username"
+    except UserPrivacyRestrictedError:
+        result["error"] = "User privacy settings block messages"
+    except FloodWaitError as e:
+        result["error"] = f"Rate limited, wait {e.seconds}s"
+    except Exception as e:
+        result["error"] = str(e)[:50]
+        print(f"Error sending to @{username}: {e}", flush=True)
     
-    # List failed users
-    failed_users = [r for r in results if not r["success"]]
-    if failed_users:
-        summary.extend(["", "❌ <b>Failed sends:</b>"])
-        for r in failed_users:
-            summary.append(f"• @{r['username']}: {r['error']}")
-    
-    return "\n".join(summary)
+    return result
 
 
 # ============== Event Handlers ==============
@@ -197,241 +153,192 @@ async def generate_summary(results: List[dict]) -> str:
 @client.on(events.NewMessage(pattern="/start"))
 async def start_handler(event):
     """Handle /start command."""
-    sender = await event.get_sender()
-    await event.reply(
-        f"👋 Hello, {sender.first_name}!\n\n"
-        "I'm a Message Sender Bot. I can send messages to any Telegram user by username.\n\n"
-        "📋 <b>Commands:</b>\n"
-        "/send - Start sending messages\n"
-        "/help - Show help\n\n"
-        "⚠️ <b>Note:</b> I use a real Telegram account to resolve usernames.",
-        parse_mode="html"
-    )
+    try:
+        sender = await event.get_sender()
+        print(f"/start from {sender.first_name} (ID: {sender.id})", flush=True)
+        
+        await event.reply(
+            f"👋 Hello, {sender.first_name}!\n\n"
+            "I'm a Message Sender Bot. I can send messages to any Telegram user by username.\n\n"
+            "📋 Commands:\n"
+            "/send - Start sending messages\n"
+            "/help - Show help",
+        )
+    except Exception as e:
+        print(f"Error in start_handler: {e}", flush=True)
 
 
 @client.on(events.NewMessage(pattern="/help"))
 async def help_handler(event):
     """Handle /help command."""
-    await event.reply(
-        "📖 <b>How to use:</b>\n\n"
-        "1. Send /send to start\n"
-        "2. Type your message\n"
-        "3. Enter usernames (max 50)\n"
-        "4. Wait for completion\n\n"
-        "<b>Username format:</b>\n"
-        "• @username1, @username2\n"
-        "• Or one per line\n\n"
-        "<b>Commands:</b>\n"
-        "/start - Start the bot\n"
-        "/send - Send messages\n"
-        "/help - Show this help\n\n"
-        "⏱️ 10-second delay between messages",
-        parse_mode="html"
-    )
-
-
-# Conversation state storage (simple dict, per-user)
-user_states = {}
-user_messages = {}
+    try:
+        await event.reply(
+            "📖 How to use:\n\n"
+            "1. Send /send to start\n"
+            "2. Type your message\n"
+            "3. Enter usernames (max 50)\n"
+            "4. Wait for completion\n\n"
+            "Username format:\n"
+            "• @username1, @username2\n"
+            "• Or one per line\n\n"
+            "⏱️ 10-second delay between messages"
+        )
+    except Exception as e:
+        print(f"Error in help_handler: {e}", flush=True)
 
 
 @client.on(events.NewMessage(pattern="/send"))
 async def send_handler(event):
-    """Handle /send command - start conversation."""
-    user_id = event.sender_id
-    user_states[user_id] = "waiting_message"
-    user_messages[user_id] = {}
-    
-    await event.reply(
-        "📤 Let's send a message!\n\n"
-        "Please type the message you want to send:"
-    )
+    """Handle /send command."""
+    try:
+        user_id = event.sender_id
+        user_states[user_id] = "waiting_message"
+        user_messages[user_id] = {}
+        
+        print(f"/send from user {user_id}", flush=True)
+        
+        await event.reply("📤 Let's send a message!\n\nPlease type your message:")
+    except Exception as e:
+        print(f"Error in send_handler: {e}", flush=True)
 
 
 @client.on(events.NewMessage)
 async def message_handler(event):
-    """Handle user messages based on state."""
-    user_id = event.sender_id
-    
-    # Ignore commands
-    if event.raw_text.startswith("/"):
-        return
-    
-    # Check if user is in a conversation
-    if user_id not in user_states:
-        return
-    
-    state = user_states[user_id]
-    text = event.raw_text
-    
-    if state == "waiting_message":
-        # Store message and ask for usernames
-        user_messages[user_id]["message"] = text
-        user_states[user_id] = "waiting_usernames"
+    """Handle user messages."""
+    try:
+        user_id = event.sender_id
+        text = event.raw_text
         
-        await event.reply(
-            "✅ Message saved!\n\n"
-            f"Now enter the usernames to send to (max {MAX_USERNAMES}):\n"
-            "• Separate with commas or new lines\n"
-            "• Example: @user1, @user2, @user3"
-        )
-    
-    elif state == "waiting_usernames":
-        # Parse and validate usernames
-        usernames = parse_usernames(text)
-        
-        if len(usernames) == 0:
-            await event.reply(
-                "❌ No valid usernames found. Please enter at least one username:"
-            )
+        # Ignore commands
+        if text.startswith("/"):
             return
         
-        if len(usernames) > MAX_USERNAMES:
-            await event.reply(
-                f"❌ Too many usernames! You provided {len(usernames)}, "
-                f"but the maximum is {MAX_USERNAMES}.\n\n"
-                f"Please enter {MAX_USERNAMES} or fewer usernames:"
-            )
+        if user_id not in user_states:
             return
         
-        # Clear state
-        del user_states[user_id]
-        message_to_send = user_messages[user_id].get("message", "")
-        del user_messages[user_id]
+        state = user_states[user_id]
         
-        # Start sending
-        await event.reply(
-            f"📤 Sending to {len(usernames)} user(s)...\n"
-            f"⏱️ {DELAY_SECONDS}-second delay between messages.\n"
-            f"Please wait..."
-        )
+        if state == "waiting_message":
+            user_messages[user_id]["message"] = text
+            user_states[user_id] = "waiting_usernames"
+            
+            await event.reply(
+                "✅ Message saved!\n\n"
+                f"Enter usernames (max {MAX_USERNAMES}):\n"
+                "Example: @user1, @user2, @user3"
+            )
         
-        # Progress callback
-        async def progress(current, total, result):
-            if current % 5 == 0 or current == total:
-                status = "✅" if result["success"] else "❌"
-                await event.reply(
-                    f"⏳ Progress: {current}/{total} - @{result['username']} {status}"
-                )
-        
-        # Send messages
-        results = await send_messages_to_list(usernames, message_to_send, progress)
-        
-        # Send summary
-        summary = await generate_summary(results)
-        await event.reply(summary, parse_mode="html")
+        elif state == "waiting_usernames":
+            usernames = parse_usernames(text)
+            
+            if len(usernames) == 0:
+                await event.reply("❌ No valid usernames. Try again:")
+                return
+            
+            if len(usernames) > MAX_USERNAMES:
+                await event.reply(f"❌ Too many! Max is {MAX_USERNAMES}. Try again:")
+                return
+            
+            message_to_send = user_messages[user_id].get("message", "")
+            del user_states[user_id]
+            del user_messages[user_id]
+            
+            await event.reply(f"📤 Sending to {len(usernames)} user(s)... Please wait.")
+            
+            # Send messages
+            results = []
+            for i, username in enumerate(usernames, 1):
+                result = await resolve_and_send(username, message_to_send)
+                results.append(result)
+                
+                if i % 5 == 0 or i == len(usernames):
+                    status = "✅" if result["success"] else "❌"
+                    try:
+                        await event.reply(f"Progress: {i}/{len(usernames)} {status}")
+                    except:
+                        pass
+                
+                if i < len(usernames):
+                    await asyncio.sleep(DELAY_SECONDS)
+            
+            # Summary
+            successful = sum(1 for r in results if r["success"])
+            failed = len(results) - successful
+            
+            summary = f"✅ Done!\n\n📊 Summary:\n• Total: {len(results)}\n• Successful: {successful}\n• Failed: {failed}"
+            
+            failed_users = [r for r in results if not r["success"]]
+            if failed_users:
+                summary += "\n\n❌ Failed:\n"
+                for r in failed_users[:5]:  # Show first 5
+                    summary += f"• @{r['username']}: {r['error']}\n"
+            
+            await event.reply(summary)
+            
+    except Exception as e:
+        print(f"Error in message_handler: {e}", flush=True)
+        traceback.print_exc()
 
 
 async def main():
-    """Main function to start the client."""
-    logger.info("Starting Telegram UserBot...")
+    """Main function."""
+    print("=" * 60, flush=True)
+    print("CONNECTING TO TELEGRAM...", flush=True)
+    print("=" * 60, flush=True)
     
-    # Start the client
-    await client.start(phone=PHONE_NUMBER)
-    
-    # Get and log the user info
-    me = await client.get_me()
-    logger.info(f"Logged in as: {me.first_name} (@{me.username}, ID: {me.id})")
-    
-    # Run until disconnected
-    logger.info("Bot is running! Waiting for messages...")
-    await client.run_until_disconnected()
-
-
-if __name__ == "__main__":
-    # Run the main function
-    client.loop.run_until_complete(main())
-t update.message.reply_text(summary, parse_mode="HTML")
-    
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show registered users."""
-    users = load_registered_users()
-    
-    if not users:
-        await update.message.reply_text(
-            "📭 No registered users yet.\n"
-            "Share your bot link so people can start it!"
-        )
-        return
-    
-    user_list = []
-    for user_id, data in users.items():
-        username = data.get("username")
-        first_name = data.get("first_name", "Unknown")
-        if username:
-            user_list.append(f"• @{username} ({first_name})")
+    try:
+        await client.connect()
+        print("Connected to Telegram servers", flush=True)
+        
+        # Check if authorized
+        if await client.is_user_authorized():
+            print("✅ Already authenticated!", flush=True)
         else:
-            user_list.append(f"• {first_name} (ID: {user_id})")
-    
-    await update.message.reply_text(
-        f"📋 <b>Registered Users ({len(users)}):</b>\n\n"
-        + "\n".join(user_list),
-        parse_mode="HTML"
-    )
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show help information."""
-    await update.message.reply_text(
-        "📖 <b>Bot Commands:</b>\n\n"
-        "/start - Register yourself and start the bot\n"
-        "/send - Start sending messages to users\n"
-        "/users - List all registered users\n"
-        "/help - Show this help message\n"
-        "/cancel - Cancel current operation\n\n"
-        "<b>How to send messages:</b>\n"
-        "1. Send /send\n"
-        "2. Type your message\n"
-        "3. Enter usernames (or type ALL)\n"
-        "4. Wait for completion\n\n"
-        "<b>Important:</b>\n"
-        "• Users must /start the bot before receiving messages\n"
-        "• Max 50 users per batch\n"
-        "• 10-second delay between messages\n"
-        "• Use @username format or type ALL",
-        parse_mode="HTML"
-    )
-
-
-def main() -> None:
-    """Start the bot."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        logger.error("TELEGRAM_BOT_TOKEN environment variable not set!")
-        raise ValueError("TELEGRAM_BOT_TOKEN environment variable is required")
-    
-    # Create application
-    application = Application.builder().token(token).build()
-    
-    # Conversation handler
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("send", send_command)],
-        states={
-            MESSAGE_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message)
-            ],
-            USERNAME_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_usernames)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("users", users_command))
-    application.add_handler(CommandHandler("help", help_command))
-    
-    logger.info("Bot started! Waiting for messages...")
-    
-    # Run the bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+            print("❌ NOT AUTHENTICATED!", flush=True)
+            print("You need to set SESSION_STRING environment variable.", flush=True)
+            print("Run 'python generate_session.py' locally to get it.", flush=True)
+            await client.disconnect()
+            # Keep running so Render doesn't restart loop
+            while True:
+                print("Waiting for SESSION_STRING... Check logs above.", flush=True)
+                await asyncio.sleep(60)
+            return
+        
+        me = await client.get_me()
+        print("=" * 60, flush=True)
+        print(f"✅ LOGGED IN AS: {me.first_name}", flush=True)
+        if me.username:
+            print(f"   Username: @{me.username}", flush=True)
+        print(f"   ID: {me.id}", flush=True)
+        print("=" * 60, flush=True)
+        print("🤖 Bot is running! Send /start to test.", flush=True)
+        print("=" * 60, flush=True)
+        
+        # Keep running
+        await client.run_until_disconnected()
+        
+    except AuthKeyUnregisteredError:
+        print("=" * 60, flush=True)
+        print("❌ AUTHENTICATION FAILED!", flush=True)
+        print("Your SESSION_STRING is invalid or expired.", flush=True)
+        print("Generate a new one with: python generate_session.py", flush=True)
+        print("=" * 60, flush=True)
+        # Keep process alive to see error
+        while True:
+            await asyncio.sleep(60)
+    except Exception as e:
+        print(f"❌ FATAL ERROR: {e}", flush=True)
+        traceback.print_exc()
+        # Keep process alive to see error
+        while True:
+            await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        client.loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Bot stopped by user", flush=True)
+    except Exception as e:
+        print(f"Bot crashed: {e}", flush=True)
+        traceback.print_exc()
