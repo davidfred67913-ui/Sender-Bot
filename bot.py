@@ -3,43 +3,28 @@ import os
 import sys
 import asyncio
 
-print("LINE 1: Script started", flush=True)
+print("BOT STARTING", flush=True)
 
 API_ID = os.environ.get("TELEGRAM_API_ID")
 API_HASH = os.environ.get("TELEGRAM_API_HASH")
-PHONE_NUMBER = os.environ.get("TELEGRAM_PHONE_NUMBER")
-SESSION_STRING = os.environ.get("SESSION_STRING")
+PHONE = os.environ.get("TELEGRAM_PHONE_NUMBER")
+SESSION = os.environ.get("SESSION_STRING")
 
-print(f"LINE 2: API_ID={bool(API_ID)}, API_HASH={bool(API_HASH)}, PHONE={bool(PHONE_NUMBER)}, SESSION={bool(SESSION_STRING)}", flush=True)
+print(f"ENV CHECK: API_ID={bool(API_ID)}, API_HASH={bool(API_HASH)}, PHONE={bool(PHONE)}, SESSION={bool(SESSION)}", flush=True)
 
-if not all([API_ID, API_HASH, PHONE_NUMBER, SESSION_STRING]):
+if not all([API_ID, API_HASH, PHONE, SESSION]):
     print("ERROR: Missing environment variables", flush=True)
     sys.exit(1)
 
-print("LINE 3: Importing telethon...", flush=True)
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.tl.types import User
+from telethon.errors import UsernameNotOccupiedError, UserPrivacyRestrictedError, FloodWaitError
 
-try:
-    from telethon import TelegramClient, events
-    from telethon.sessions import StringSession
-    from telethon.tl.types import User
-    from telethon.errors import UsernameNotOccupiedError, UserPrivacyRestrictedError, FloodWaitError
-    print("LINE 4: Telethon imported successfully", flush=True)
-except Exception as e:
-    print(f"ERROR importing telethon: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+print("Telethon imported", flush=True)
 
-print("LINE 5: Creating client...", flush=True)
-
-try:
-    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
-    print("LINE 6: Client created", flush=True)
-except Exception as e:
-    print(f"ERROR creating client: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
+client = TelegramClient(StringSession(SESSION), int(API_ID), API_HASH)
+print("Client created", flush=True)
 
 user_states = {}
 user_messages = {}
@@ -71,12 +56,9 @@ async def send_to_username(username, message):
 
 @client.on(events.NewMessage(pattern="/start"))
 async def start(event):
-    try:
-        sender = await event.get_sender()
-        print(f"/start from {sender.first_name}", flush=True)
-        await event.reply(f"Hello {sender.first_name}!\n\n/send - Send messages\n/help - Help")
-    except Exception as e:
-        print(f"Error in start: {e}", flush=True)
+    sender = await event.get_sender()
+    print(f"/start from {sender.first_name}", flush=True)
+    await event.reply(f"Hello {sender.first_name}!\n\n/send - Send messages\n/help - Help")
 
 @client.on(events.NewMessage(pattern="/help"))
 async def help_cmd(event):
@@ -147,6 +129,28 @@ async def handle_msg(event):
                 summary += f"\n@{r['username']}: {r['error']}"
         
         await event.reply(summary)
+
+async def main():
+    print("Connecting...", flush=True)
+    await client.start()
+    
+    me = await client.get_me()
+    print(f"Logged in as: {me.first_name} (@{me.username})", flush=True)
+    print("Bot running! Send /start to test.", flush=True)
+    
+    await client.run_until_disconnected()
+    print("Disconnected", flush=True)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Stopped", flush=True)
+    except Exception as e:
+        print(f"Error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+y(summary)
 
 async def main():
     print("LINE 7: Connecting to Telegram...", flush=True)
