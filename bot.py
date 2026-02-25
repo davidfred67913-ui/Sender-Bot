@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import asyncio
 
 print("LINE 1: Script started", flush=True)
 
@@ -18,7 +19,6 @@ if not all([API_ID, API_HASH, PHONE_NUMBER, SESSION_STRING]):
 print("LINE 3: Importing telethon...", flush=True)
 
 try:
-    import asyncio
     from telethon import TelegramClient, events
     from telethon.sessions import StringSession
     from telethon.tl.types import User
@@ -152,8 +152,8 @@ async def main():
     print("LINE 7: Connecting to Telegram...", flush=True)
     
     try:
-        await client.connect()
-        print("LINE 8: Connected", flush=True)
+        await client.start()
+        print("LINE 8: Connected and started", flush=True)
     except Exception as e:
         print(f"ERROR connecting: {e}", flush=True)
         import traceback
@@ -161,28 +161,15 @@ async def main():
         return
     
     try:
-        authorized = await client.is_user_authorized()
-        print(f"LINE 9: Authorized={authorized}", flush=True)
-    except Exception as e:
-        print(f"ERROR checking auth: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        return
-    
-    if not authorized:
-        print("ERROR: Not authenticated. SESSION_STRING may be invalid.", flush=True)
-        return
-    
-    try:
         me = await client.get_me()
-        print(f"LINE 10: Logged in as {me.first_name} (@{me.username})", flush=True)
+        print(f"LINE 9: Logged in as {me.first_name} (@{me.username})", flush=True)
     except Exception as e:
         print(f"ERROR getting me: {e}", flush=True)
         import traceback
         traceback.print_exc()
         return
     
-    print("LINE 11: Bot is running! Waiting for messages...", flush=True)
+    print("LINE 10: Bot is running! Waiting for messages...", flush=True)
     
     try:
         await client.run_until_disconnected()
@@ -191,13 +178,13 @@ async def main():
         import traceback
         traceback.print_exc()
     
-    print("LINE 12: Disconnected", flush=True)
+    print("LINE 11: Disconnected", flush=True)
 
-print("LINE 13: About to run main()", flush=True)
+print("LINE 12: Starting asyncio.run()", flush=True)
 
 if __name__ == "__main__":
     try:
-        client.loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("Stopped by user", flush=True)
     except Exception as e:
@@ -205,4 +192,4 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     
-    print("LINE 14: Script ending", flush=True)
+    print("LINE 13: Script ending", flush=True)
