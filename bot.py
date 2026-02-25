@@ -10,7 +10,7 @@ API_HASH = os.environ.get("TELEGRAM_API_HASH")
 PHONE = os.environ.get("TELEGRAM_PHONE_NUMBER")
 SESSION = os.environ.get("SESSION_STRING")
 
-print(f"ENV CHECK: API_ID={bool(API_ID)}, API_HASH={bool(API_HASH)}, PHONE={bool(PHONE)}, SESSION={bool(SESSION)}", flush=True)
+print(f"ENV: API_ID={bool(API_ID)}, API_HASH={bool(API_HASH)}, PHONE={bool(PHONE)}, SESSION={bool(SESSION)}", flush=True)
 
 if not all([API_ID, API_HASH, PHONE, SESSION]):
     print("ERROR: Missing environment variables", flush=True)
@@ -150,50 +150,3 @@ if __name__ == "__main__":
         print(f"Error: {e}", flush=True)
         import traceback
         traceback.print_exc()
-y(summary)
-
-async def main():
-    print("LINE 7: Connecting to Telegram...", flush=True)
-    
-    try:
-        await client.start()
-        print("LINE 8: Connected and started", flush=True)
-    except Exception as e:
-        print(f"ERROR connecting: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        return
-    
-    try:
-        me = await client.get_me()
-        print(f"LINE 9: Logged in as {me.first_name} (@{me.username})", flush=True)
-    except Exception as e:
-        print(f"ERROR getting me: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        return
-    
-    print("LINE 10: Bot is running! Waiting for messages...", flush=True)
-    
-    try:
-        await client.run_until_disconnected()
-    except Exception as e:
-        print(f"ERROR in run_until_disconnected: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-    
-    print("LINE 11: Disconnected", flush=True)
-
-print("LINE 12: Starting asyncio.run()", flush=True)
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Stopped by user", flush=True)
-    except Exception as e:
-        print(f"FATAL ERROR: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-    
-    print("LINE 13: Script ending", flush=True)
