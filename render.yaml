@@ -1,30 +1,21 @@
-# Render Background Worker Configuration
-# 
-# IMPORTANT: You MUST generate a SESSION_STRING before deploying!
-# 
-# Steps:
-# 1. Run: python generate_session.py (on your local machine)
-# 2. Copy the SESSION_STRING output
-# 3. Add ALL environment variables in Render dashboard:
-#    - TELEGRAM_API_ID
-#    - TELEGRAM_API_HASH
-#    - TELEGRAM_PHONE_NUMBER
-#    - SESSION_STRING (the one you generated)
-# 4. Deploy!
-
 services:
   - type: worker
     name: telegram-message-bot
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
+    buildCommand: |
+      echo "Installing dependencies..."
+      pip install -r requirements.txt
+      echo "Dependencies installed"
+    startCommand: |
+      echo "Starting bot..."
+      python bot.py
     envVars:
       - key: TELEGRAM_API_ID
-        sync: false  # Required: Your API ID from my.telegram.org
+        sync: false
       - key: TELEGRAM_API_HASH
-        sync: false  # Required: Your API hash from my.telegram.org
+        sync: false
       - key: TELEGRAM_PHONE_NUMBER
-        sync: false  # Required: Your phone number with country code
+        sync: false
       - key: SESSION_STRING
-        sync: false  # Required: Generate with generate_session.py
+        sync: false
     plan: starter
