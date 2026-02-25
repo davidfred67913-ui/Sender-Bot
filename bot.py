@@ -19,12 +19,11 @@ from telethon.errors import (
     FloodWaitError,
     UserPrivacyRestrictedError,
     PeerIdInvalidError,
-    SessionPasswordNeededError,
     AuthKeyUnregisteredError,
 )
 from telethon.sessions import StringSession
 
-# Setup logging - MUST go to stdout for Render
+# Setup logging
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -131,7 +130,7 @@ async def resolve_and_send(username: str, message: str) -> dict:
         
         await client.send_message(entity.id, message)
         result["success"] = True
-        print(f"✅ Sent to @{clean_username}", flush=True)
+        print(f"Sent to @{clean_username}", flush=True)
         
     except UsernameNotOccupiedError:
         result["error"] = "Username does not exist"
@@ -148,8 +147,6 @@ async def resolve_and_send(username: str, message: str) -> dict:
     return result
 
 
-# ============== Event Handlers ==============
-
 @client.on(events.NewMessage(pattern="/start"))
 async def start_handler(event):
     """Handle /start command."""
@@ -158,9 +155,9 @@ async def start_handler(event):
         print(f"/start from {sender.first_name} (ID: {sender.id})", flush=True)
         
         await event.reply(
-            f"👋 Hello, {sender.first_name}!\n\n"
-            "I'm a Message Sender Bot. I can send messages to any Telegram user by username.\n\n"
-            "📋 Commands:\n"
+            f"Hello, {sender.first_name}!\n\n"
+            "I am a Message Sender Bot. I can send messages to any Telegram user by username.\n\n"
+            "Commands:\n"
             "/send - Start sending messages\n"
             "/help - Show help",
         )
@@ -173,7 +170,7 @@ async def help_handler(event):
     """Handle /help command."""
     try:
         await event.reply(
-            "📖 How to use:\n\n"
+            "How to use:\n\n"
             "1. Send /send to start\n"
             "2. Type your message\n"
             "3. Enter usernames (max 50)\n"
@@ -181,7 +178,7 @@ async def help_handler(event):
             "Username format:\n"
             "• @username1, @username2\n"
             "• Or one per line\n\n"
-            "⏱️ 10-second delay between messages"
+            "10-second delay between messages"
         )
     except Exception as e:
         print(f"Error in help_handler: {e}", flush=True)
@@ -197,7 +194,7 @@ async def send_handler(event):
         
         print(f"/send from user {user_id}", flush=True)
         
-        await event.reply("📤 Let's send a message!\n\nPlease type your message:")
+        await event.reply("Let's send a message!\n\nPlease type your message:")
     except Exception as e:
         print(f"Error in send_handler: {e}", flush=True)
 
@@ -223,7 +220,7 @@ async def message_handler(event):
             user_states[user_id] = "waiting_usernames"
             
             await event.reply(
-                "✅ Message saved!\n\n"
+                "Message saved!\n\n"
                 f"Enter usernames (max {MAX_USERNAMES}):\n"
                 "Example: @user1, @user2, @user3"
             )
@@ -232,18 +229,18 @@ async def message_handler(event):
             usernames = parse_usernames(text)
             
             if len(usernames) == 0:
-                await event.reply("❌ No valid usernames. Try again:")
+                await event.reply("No valid usernames. Try again:")
                 return
             
             if len(usernames) > MAX_USERNAMES:
-                await event.reply(f"❌ Too many! Max is {MAX_USERNAMES}. Try again:")
+                await event.reply(f"Too many! Max is {MAX_USERNAMES}. Try again:")
                 return
             
             message_to_send = user_messages[user_id].get("message", "")
             del user_states[user_id]
             del user_messages[user_id]
             
-            await event.reply(f"📤 Sending to {len(usernames)} user(s)... Please wait.")
+            await event.reply(f"Sending to {len(usernames)} user(s)... Please wait.")
             
             # Send messages
             results = []
@@ -252,7 +249,7 @@ async def message_handler(event):
                 results.append(result)
                 
                 if i % 5 == 0 or i == len(usernames):
-                    status = "✅" if result["success"] else "❌"
+                    status = "OK" if result["success"] else "FAIL"
                     try:
                         await event.reply(f"Progress: {i}/{len(usernames)} {status}")
                     except:
@@ -265,12 +262,12 @@ async def message_handler(event):
             successful = sum(1 for r in results if r["success"])
             failed = len(results) - successful
             
-            summary = f"✅ Done!\n\n📊 Summary:\n• Total: {len(results)}\n• Successful: {successful}\n• Failed: {failed}"
+            summary = f"Done!\n\nSummary:\n• Total: {len(results)}\n• Successful: {successful}\n• Failed: {failed}"
             
             failed_users = [r for r in results if not r["success"]]
             if failed_users:
-                summary += "\n\n❌ Failed:\n"
-                for r in failed_users[:5]:  # Show first 5
+                summary += "\n\nFailed:\n"
+                for r in failed_users[:5]:
                     summary += f"• @{r['username']}: {r['error']}\n"
             
             await event.reply(summary)
@@ -292,44 +289,40 @@ async def main():
         
         # Check if authorized
         if await client.is_user_authorized():
-            print("✅ Already authenticated!", flush=True)
+            print("Already authenticated!", flush=True)
         else:
-            print("❌ NOT AUTHENTICATED!", flush=True)
+            print("NOT AUTHENTICATED!", flush=True)
             print("You need to set SESSION_STRING environment variable.", flush=True)
             print("Run 'python generate_session.py' locally to get it.", flush=True)
             await client.disconnect()
-            # Keep running so Render doesn't restart loop
             while True:
-                print("Waiting for SESSION_STRING... Check logs above.", flush=True)
+                print("Waiting for SESSION_STRING...", flush=True)
                 await asyncio.sleep(60)
             return
         
         me = await client.get_me()
         print("=" * 60, flush=True)
-        print(f"✅ LOGGED IN AS: {me.first_name}", flush=True)
+        print(f"LOGGED IN AS: {me.first_name}", flush=True)
         if me.username:
-            print(f"   Username: @{me.username}", flush=True)
-        print(f"   ID: {me.id}", flush=True)
+            print(f"Username: @{me.username}", flush=True)
+        print(f"ID: {me.id}", flush=True)
         print("=" * 60, flush=True)
-        print("🤖 Bot is running! Send /start to test.", flush=True)
+        print("Bot is running! Send /start to test.", flush=True)
         print("=" * 60, flush=True)
         
-        # Keep running
         await client.run_until_disconnected()
         
     except AuthKeyUnregisteredError:
         print("=" * 60, flush=True)
-        print("❌ AUTHENTICATION FAILED!", flush=True)
+        print("AUTHENTICATION FAILED!", flush=True)
         print("Your SESSION_STRING is invalid or expired.", flush=True)
         print("Generate a new one with: python generate_session.py", flush=True)
         print("=" * 60, flush=True)
-        # Keep process alive to see error
         while True:
             await asyncio.sleep(60)
     except Exception as e:
-        print(f"❌ FATAL ERROR: {e}", flush=True)
+        print(f"FATAL ERROR: {e}", flush=True)
         traceback.print_exc()
-        # Keep process alive to see error
         while True:
             await asyncio.sleep(60)
 
