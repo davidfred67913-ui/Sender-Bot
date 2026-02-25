@@ -1,35 +1,46 @@
 #!/usr/bin/env python3
 import os
 import sys
-import asyncio
 
-print("BOT STARTING", flush=True)
+print("LINE 1: Script started", flush=True)
 
 API_ID = os.environ.get("TELEGRAM_API_ID")
 API_HASH = os.environ.get("TELEGRAM_API_HASH")
 PHONE_NUMBER = os.environ.get("TELEGRAM_PHONE_NUMBER")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-print(f"API_ID: {bool(API_ID)}", flush=True)
-print(f"API_HASH: {bool(API_HASH)}", flush=True)
-print(f"PHONE: {bool(PHONE_NUMBER)}", flush=True)
-print(f"SESSION: {bool(SESSION_STRING)}", flush=True)
+print(f"LINE 2: API_ID={bool(API_ID)}, API_HASH={bool(API_HASH)}, PHONE={bool(PHONE_NUMBER)}, SESSION={bool(SESSION_STRING)}", flush=True)
 
 if not all([API_ID, API_HASH, PHONE_NUMBER, SESSION_STRING]):
-    print("MISSING ENV VARS", flush=True)
+    print("ERROR: Missing environment variables", flush=True)
     sys.exit(1)
 
+print("LINE 3: Importing telethon...", flush=True)
+
 try:
+    import asyncio
     from telethon import TelegramClient, events
     from telethon.sessions import StringSession
     from telethon.tl.types import User
     from telethon.errors import UsernameNotOccupiedError, UserPrivacyRestrictedError, FloodWaitError
-    print("Telethon imported", flush=True)
+    print("LINE 4: Telethon imported successfully", flush=True)
 except Exception as e:
-    print(f"Import error: {e}", flush=True)
+    print(f"ERROR importing telethon: {e}", flush=True)
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
-client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+print("LINE 5: Creating client...", flush=True)
+
+try:
+    client = TelegramClient(StringSession(SESSION_STRING), int(API_ID), API_HASH)
+    print("LINE 6: Client created", flush=True)
+except Exception as e:
+    print(f"ERROR creating client: {e}", flush=True)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
 user_states = {}
 user_messages = {}
 
@@ -60,8 +71,12 @@ async def send_to_username(username, message):
 
 @client.on(events.NewMessage(pattern="/start"))
 async def start(event):
-    sender = await event.get_sender()
-    await event.reply(f"Hello {sender.first_name}!\n\n/send - Send messages\n/help - Help")
+    try:
+        sender = await event.get_sender()
+        print(f"/start from {sender.first_name}", flush=True)
+        await event.reply(f"Hello {sender.first_name}!\n\n/send - Send messages\n/help - Help")
+    except Exception as e:
+        print(f"Error in start: {e}", flush=True)
 
 @client.on(events.NewMessage(pattern="/help"))
 async def help_cmd(event):
@@ -134,18 +149,60 @@ async def handle_msg(event):
         await event.reply(summary)
 
 async def main():
-    print("Connecting...", flush=True)
-    await client.connect()
+    print("LINE 7: Connecting to Telegram...", flush=True)
     
-    if not await client.is_user_authorized():
-        print("NOT AUTHENTICATED - Check SESSION_STRING", flush=True)
+    try:
+        await client.connect()
+        print("LINE 8: Connected", flush=True)
+    except Exception as e:
+        print(f"ERROR connecting: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return
     
-    me = await client.get_me()
-    print(f"Logged in as: {me.first_name} (@{me.username})", flush=True)
-    print("Bot running! Send /start to test.", flush=True)
+    try:
+        authorized = await client.is_user_authorized()
+        print(f"LINE 9: Authorized={authorized}", flush=True)
+    except Exception as e:
+        print(f"ERROR checking auth: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return
     
-    await client.run_until_disconnected()
+    if not authorized:
+        print("ERROR: Not authenticated. SESSION_STRING may be invalid.", flush=True)
+        return
+    
+    try:
+        me = await client.get_me()
+        print(f"LINE 10: Logged in as {me.first_name} (@{me.username})", flush=True)
+    except Exception as e:
+        print(f"ERROR getting me: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return
+    
+    print("LINE 11: Bot is running! Waiting for messages...", flush=True)
+    
+    try:
+        await client.run_until_disconnected()
+    except Exception as e:
+        print(f"ERROR in run_until_disconnected: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+    
+    print("LINE 12: Disconnected", flush=True)
+
+print("LINE 13: About to run main()", flush=True)
 
 if __name__ == "__main__":
-    client.loop.run_until_complete(main())
+    try:
+        client.loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Stopped by user", flush=True)
+    except Exception as e:
+        print(f"FATAL ERROR: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+    
+    print("LINE 14: Script ending", flush=True)
