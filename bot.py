@@ -1,148 +1,213 @@
 #!/usr/bin/env python3
 """
-Telegram Message Sender Bot
-Uses Telethon (MTProto) to send messages to usernames
+Telegram UserBot for sending messages to usernames
+Uses MTProto API (Telethon) - requires a real Telegram account
 """
 
 import os
-import sys
 import asyncio
+import logging
+import sys
+import traceback
+from typing import List, Optional
 
-# Force unbuffered output
+from telethon import TelegramClient, events
+from telethon.tl.types import User
+from telethon.errors import (
+    UsernameNotOccupiedError,
+    UsernameInvalidError,
+    FloodWaitError,
+    UserPrivacyRestrictedError,
+    PeerIdInvalidError,
+    SessionPasswordNeededError,
+    AuthKeyUnregisteredError,
+    RPCError
+)
+from telethon.sessions import StringSession
+
+# Setup logging - MUST go to stdout for Render
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
+
+# Force stdout flush for Render
 sys.stdout.reconfigure(line_buffering=True)
 
-def log(msg):
-    print(msg, flush=True)
+# Configuration
+MAX_USERNAMES = 50
+DELAY_SECONDS = 10
 
-log("=" * 60)
-log("TELEGRAM BOT STARTING")
-log("=" * 60)
+print("=" * 60, flush=True)
+print("TELEGRAM BOT STARTING", flush=True)
+print("=" * 60, flush=True)
 
-# Get environment variables
+# Get credentials from environment
 API_ID = os.environ.get("TELEGRAM_API_ID")
 API_HASH = os.environ.get("TELEGRAM_API_HASH")
-PHONE = os.environ.get("TELEGRAM_PHONE_NUMBER")
-SESSION = os.environ.get("SESSION_STRING")
+PHONE_NUMBER = os.environ.get("TELEGRAM_PHONE_NUMBER")
+SESSION_STRING = os.environ.get("SESSION_STRING")
 
-log(f"API_ID present: {bool(API_ID)}")
-log(f"API_HASH present: {bool(API_HASH)}")
-log(f"PHONE present: {bool(PHONE)}")
-log(f"SESSION present: {bool(SESSION)}")
+print(f"API_ID present: {bool(API_ID)}", flush=True)
+print(f"API_HASH present: {bool(API_HASH)}", flush=True)
+print(f"PHONE_NUMBER present: {bool(PHONE_NUMBER)}", flush=True)
+print(f"SESSION_STRING present: {bool(SESSION_STRING)}", flush=True)
 
-if not all([API_ID, API_HASH, PHONE, SESSION]):
-    log("ERROR: Missing required environment variables!")
-    log("Please set: TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_PHONE_NUMBER, SESSION_STRING")
+# Validate config
+if not API_ID:
+    print("ERROR: TELEGRAM_API_ID is not set!", flush=True)
+    sys.exit(1)
+if not API_HASH:
+    print("ERROR: TELEGRAM_API_HASH is not set!", flush=True)
     sys.exit(1)
 
 try:
     API_ID = int(API_ID)
 except ValueError:
-    log("ERROR: TELEGRAM_API_ID must be a number!")
-    sys.exit(1)
-
-# Import telethon
-log("Importing Telethon...")
-try:
-    from telethon import TelegramClient, events
-    from telethon.sessions import StringSession
-    from telethon.tl.types import User
-    from telethon.errors import (
-        UsernameNotOccupiedError,
-        UserPrivacyRestrictedError,
-        FloodWaitError
-    )
-    log("Telethon imported successfully")
-except ImportError as e:
-    log(f"ERROR: Failed to import Telethon: {e}")
+    print("ERROR: TELEGRAM_API_ID must be a number!", flush=True)
     sys.exit(1)
 
 # Create client
-log("Creating Telegram client...")
-client = TelegramClient(StringSession(SESSION), API_ID, API_HASH)
-log("Client created")
+if SESSION_STRING and SESSION_STRING.strip():
+    print("Using SESSION_STRING from environment", flush=True)
+    session = StringSession(SESSION_STRING.strip())
+else:
+    print("ERROR: SESSION_STRING is empty or not set!", flush=True)
+    print("You MUST set SESSION_STRING environment variable for Render deployment.", flush=True)
+    print("Run 'python generate_session.py' locally to generate one.", flush=True)
+    sys.exit(1)
+
+client = TelegramClient(session, API_ID, API_HASH)
 
 # User state storage
 user_states = {}
 user_messages = {}
 
-def parse_usernames(text):
+
+def parse_usernames(text: str) -> List[str]:
     """Parse usernames from input text."""
-    usernames = []
+    raw_list = []
     for line in text.split("\n"):
         for item in line.split(","):
-            u = item.strip().lstrip("@").lower()
-            if u:
-                usernames.append(u)
-    # Remove duplicates while preserving order
+            raw_list.append(item.strip())
+    
+    usernames = []
+    for username in raw_list:
+        username = username.strip()
+        if username.startswith("@"):
+            username = username[1:]
+        if username:
+            usernames.append(username.lower())
+    
+    # Remove duplicates
     seen = set()
     unique = []
     for u in usernames:
         if u not in seen:
             seen.add(u)
             unique.append(u)
+    
     return unique
 
-async def send_to_username(username, message):
-    """Send message to a username."""
-    try:
-        entity = await client.get_entity(username)
-        if not isinstance(entity, User):
-            return {"username": username, "success": False, "error": "Not a user account"}
-        await client.send_message(entity.id, message)
-        return {"username": username, "success": True, "error": None}
-    except UsernameNotOccupiedError:
-        return {"username": username, "success": False, "error": "Username not found"}
-    except UserPrivacyRestrictedError:
-        return {"username": username, "success": False, "error": "User blocked messages"}
-    except FloodWaitError as e:
-        return {"username": username, "success": False, "error": f"Rate limit: wait {e.seconds}s"}
-    except Exception as e:
-        return {"username": username, "success": False, "error": str(e)[:40]}
 
-# Event handlers
+async def resolve_and_send(username: str, message: str) -> dict:
+    """Resolve username and send message."""
+    result = {"username": username, "success": False, "error": None}
+    
+    try:
+        clean_username = username.lstrip("@").strip()
+        if not clean_username:
+            result["error"] = "Empty username"
+            return result
+        
+        print(f"Resolving @{clean_username}...", flush=True)
+        entity = await client.get_entity(clean_username)
+        
+        if not isinstance(entity, User):
+            result["error"] = "Not a user (might be channel/group)"
+            return result
+        
+        await client.send_message(entity.id, message)
+        result["success"] = True
+        print(f"✅ Sent to @{clean_username}", flush=True)
+        
+    except UsernameNotOccupiedError:
+        result["error"] = "Username does not exist"
+    except UsernameInvalidError:
+        result["error"] = "Invalid username"
+    except UserPrivacyRestrictedError:
+        result["error"] = "User privacy settings block messages"
+    except FloodWaitError as e:
+        result["error"] = f"Rate limited, wait {e.seconds}s"
+    except RPCError as e:
+        result["error"] = f"Telegram error: {str(e)[:30]}"
+    except Exception as e:
+        result["error"] = str(e)[:50]
+        print(f"Error sending to @{username}: {e}", flush=True)
+    
+    return result
+
+
+# ============== Event Handlers ==============
+
 @client.on(events.NewMessage(pattern="/start"))
 async def start_handler(event):
     """Handle /start command."""
     try:
         sender = await event.get_sender()
-        log(f"/start from {sender.first_name} (ID: {sender.id})")
+        print(f"/start from {sender.first_name} (ID: {sender.id})", flush=True)
+        
         await event.reply(
-            f"👋 Hello {sender.first_name}!\n\n"
-            "I'm a Message Sender Bot.\n\n"
+            f"👋 Hello, {sender.first_name}!\n\n"
+            "I'm a Message Sender Bot. I can send messages to any Telegram user by username.\n\n"
             "📋 Commands:\n"
             "/send - Start sending messages\n"
-            "/help - Show help"
+            "/help - Show help",
         )
     except Exception as e:
-        log(f"Error in /start: {e}")
+        print(f"Error in start_handler: {e}", flush=True)
+        traceback.print_exc()
+
 
 @client.on(events.NewMessage(pattern="/help"))
 async def help_handler(event):
     """Handle /help command."""
-    await event.reply(
-        "📖 How to use:\n\n"
-        "1. Send /send\n"
-        "2. Type your message\n"
-        "3. Enter usernames (max 50)\n"
-        "4. Wait for completion\n\n"
-        "Username format:\n"
-        "• @user1, @user2, @user3\n"
-        "• Or one per line\n\n"
-        "⏱️ 10-second delay between messages"
-    )
+    try:
+        await event.reply(
+            "📖 How to use:\n\n"
+            "1. Send /send to start\n"
+            "2. Type your message\n"
+            "3. Enter usernames (max 50)\n"
+            "4. Wait for completion\n\n"
+            "Username format:\n"
+            "• @username1, @username2\n"
+            "• Or one per line\n\n"
+            "⏱️ 10-second delay between messages"
+        )
+    except Exception as e:
+        print(f"Error in help_handler: {e}", flush=True)
+
 
 @client.on(events.NewMessage(pattern="/send"))
 async def send_handler(event):
     """Handle /send command."""
-    user_id = event.sender_id
-    user_states[user_id] = "waiting_message"
-    user_messages[user_id] = {}
-    log(f"/send from user {user_id}")
-    await event.reply("📤 Enter the message you want to send:")
+    try:
+        user_id = event.sender_id
+        user_states[user_id] = "waiting_message"
+        user_messages[user_id] = {}
+        
+        print(f"/send from user {user_id}", flush=True)
+        
+        await event.reply("📤 Let's send a message!\n\nPlease type your message:")
+    except Exception as e:
+        print(f"Error in send_handler: {e}", flush=True)
+
 
 @client.on(events.NewMessage)
 async def message_handler(event):
-    """Handle regular messages."""
+    """Handle user messages."""
     try:
         user_id = event.sender_id
         text = event.raw_text
@@ -151,123 +216,127 @@ async def message_handler(event):
         if text.startswith("/"):
             return
         
-        # Check if user is in a conversation
         if user_id not in user_states:
             return
         
         state = user_states[user_id]
         
         if state == "waiting_message":
-            # Store message and ask for usernames
             user_messages[user_id]["message"] = text
             user_states[user_id] = "waiting_usernames"
+            
             await event.reply(
                 "✅ Message saved!\n\n"
-                "Enter usernames to send to (max 50):\n"
+                f"Enter usernames (max {MAX_USERNAMES}):\n"
                 "Example: @user1, @user2, @user3"
             )
         
         elif state == "waiting_usernames":
-            # Parse usernames
             usernames = parse_usernames(text)
             
-            if not usernames:
-                await event.reply("❌ No valid usernames. Please try again:")
+            if len(usernames) == 0:
+                await event.reply("❌ No valid usernames. Try again:")
                 return
             
-            if len(usernames) > 50:
-                await event.reply(f"❌ Too many usernames! Max is 50. You entered {len(usernames)}. Try again:")
+            if len(usernames) > MAX_USERNAMES:
+                await event.reply(f"❌ Too many! Max is {MAX_USERNAMES}. Try again:")
                 return
             
-            # Get message and clear state
             message_to_send = user_messages[user_id].get("message", "")
             del user_states[user_id]
             del user_messages[user_id]
             
-            log(f"Sending to {len(usernames)} users")
             await event.reply(f"📤 Sending to {len(usernames)} user(s)... Please wait.")
             
-            # Send messages with delay
+            # Send messages
             results = []
             for i, username in enumerate(usernames, 1):
-                result = await send_to_username(username, message_to_send)
+                result = await resolve_and_send(username, message_to_send)
                 results.append(result)
                 
-                # Progress update every 5 users
                 if i % 5 == 0 or i == len(usernames):
                     status = "✅" if result["success"] else "❌"
                     try:
-                        await event.reply(f"⏳ Progress: {i}/{len(usernames)} {status}")
+                        await event.reply(f"Progress: {i}/{len(usernames)} {status}")
                     except:
                         pass
                 
-                # Delay between messages
                 if i < len(usernames):
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(DELAY_SECONDS)
             
-            # Send summary
+            # Summary
             successful = sum(1 for r in results if r["success"])
             failed = len(results) - successful
             
-            summary = (
-                f"✅ Done!\n\n"
-                f"📊 Summary:\n"
-                f"• Total: {len(results)}\n"
-                f"• Successful: {successful}\n"
-                f"• Failed: {failed}"
-            )
+            summary = f"✅ Done!\n\n📊 Summary:\n• Total: {len(results)}\n• Successful: {successful}\n• Failed: {failed}"
             
             failed_users = [r for r in results if not r["success"]]
             if failed_users:
-                summary += "\n\n❌ Failed:"
-                for r in failed_users[:5]:
-                    summary += f"\n@{r['username']}: {r['error']}"
+                summary += "\n\n❌ Failed:\n"
+                for r in failed_users[:5]:  # Show first 5
+                    summary += f"• @{r['username']}: {r['error']}\n"
             
             await event.reply(summary)
-            log(f"Completed: {successful} success, {failed} failed")
             
     except Exception as e:
-        log(f"Error in message_handler: {e}")
-        import traceback
+        print(f"Error in message_handler: {e}", flush=True)
         traceback.print_exc()
+
 
 async def main():
     """Main function."""
-    log("Connecting to Telegram...")
+    print("=" * 60, flush=True)
+    print("CONNECTING TO TELEGRAM...", flush=True)
+    print("=" * 60, flush=True)
     
     try:
-        await client.start()
-        log("Connected!")
-    except Exception as e:
-        log(f"ERROR: Failed to connect: {e}")
+        await client.connect()
+        print("✅ Connected to Telegram servers", flush=True)
+        
+        # Check if authorized
+        if await client.is_user_authorized():
+            print("✅ Authentication successful!", flush=True)
+            
+            me = await client.get_me()
+            print("=" * 60, flush=True)
+            print(f"✅ LOGGED IN AS: {me.first_name}", flush=True)
+            if me.username:
+                print(f"   Username: @{me.username}", flush=True)
+            print(f"   ID: {me.id}", flush=True)
+            print("=" * 60, flush=True)
+            print("🤖 Bot is running! Send /start to test.", flush=True)
+            print("=" * 60, flush=True)
+            
+            # Keep running
+            await client.run_until_disconnected()
+        else:
+            print("❌ AUTHENTICATION FAILED!", flush=True)
+            print("Your SESSION_STRING is invalid or expired.", flush=True)
+            print("Generate a new one with: python generate_session.py", flush=True)
+            print("=" * 60, flush=True)
+            
+            # Exit with error so Render will restart
+            sys.exit(1)
+        
+    except AuthKeyUnregisteredError:
+        print("=" * 60, flush=True)
+        print("❌ AUTHENTICATION FAILED - AuthKeyUnregisteredError!", flush=True)
+        print("Your SESSION_STRING is invalid or expired.", flush=True)
+        print("Generate a new one with: python generate_session.py", flush=True)
+        print("=" * 60, flush=True)
         sys.exit(1)
-    
-    try:
-        me = await client.get_me()
-        log("=" * 60)
-        log(f"✅ LOGGED IN AS: {me.first_name}")
-        if me.username:
-            log(f"   Username: @{me.username}")
-        log(f"   ID: {me.id}")
-        log("=" * 60)
-        log("🤖 Bot is running! Anyone can now send /start to use it.")
-        log("=" * 60)
     except Exception as e:
-        log(f"ERROR: Failed to get user info: {e}")
+        print(f"❌ FATAL ERROR: {e}", flush=True)
+        traceback.print_exc()
         sys.exit(1)
-    
-    # Keep running until disconnected
-    await client.run_until_disconnected()
-    log("Disconnected from Telegram")
 
-# Run the bot
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        log("\nStopped by user")
+        print("Bot stopped by user", flush=True)
     except Exception as e:
-        log(f"\nFATAL ERROR: {e}")
-        import traceback
+        print(f"Bot crashed: {e}", flush=True)
         traceback.print_exc()
         sys.exit(1)
